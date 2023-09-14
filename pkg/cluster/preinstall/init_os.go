@@ -45,6 +45,7 @@ func InitOS(mgr *manager.Manager) error {
 
 	mgr.Logger.Infoln("Configurating operating system ...")
 
+	// initOsOnNode 方法执行初始化操作
 	return mgr.RunTaskOnAllNodes(initOsOnNode, true)
 }
 
