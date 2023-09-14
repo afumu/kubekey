@@ -71,6 +71,7 @@ func GenerateDockerConfig(mgr *manager.Manager) (string, error) {
 func InstallerDocker(mgr *manager.Manager) error {
 	mgr.Logger.Infoln("Installing docker ...")
 
+	// 安装docker
 	return mgr.RunTaskOnAllNodes(installDockerOnNode, true)
 }
 

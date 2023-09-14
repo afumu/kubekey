@@ -30,13 +30,18 @@ import (
 )
 
 func FilesDownloadHttp(mgr *manager.Manager, filepath, version, arch string) error {
+	// 读取环境遍历，如果是中国的话，采用青云的地址
 	kkzone := os.Getenv("KKZONE")
+
 	kubeadm := files.KubeBinary{Name: "kubeadm", Arch: arch, Version: version}
 	kubelet := files.KubeBinary{Name: "kubelet", Arch: arch, Version: version}
 	kubectl := files.KubeBinary{Name: "kubectl", Arch: arch, Version: version}
+
+	// 采用固定的版本
 	kubecni := files.KubeBinary{Name: "kubecni", Arch: arch, Version: kubekeyapi.DefaultCniVersion}
 	helm := files.KubeBinary{Name: "helm", Arch: arch, Version: kubekeyapi.DefaultHelmVersion}
 
+	// 拼接下载的存储路径
 	kubeadm.Path = fmt.Sprintf("%s/kubeadm", filepath)
 	kubelet.Path = fmt.Sprintf("%s/kubelet", filepath)
 	kubectl.Path = fmt.Sprintf("%s/kubectl", filepath)
@@ -59,6 +64,7 @@ func FilesDownloadHttp(mgr *manager.Manager, filepath, version, arch string) err
 		helm.GetCmd = fmt.Sprintf("curl -o %s/helm-%s-linux-%s.tar.gz  %s && cd %s && tar -zxf helm-%s-linux-%s.tar.gz && mv linux-%s/helm . && rm -rf *linux-%s*", filepath, helm.Version, helm.Arch, helm.Url, filepath, helm.Version, helm.Arch, helm.Arch, helm.Arch)
 	}
 
+	// 拼接命令
 	kubeadm.GetCmd = fmt.Sprintf("curl -L -o %s  %s", kubeadm.Path, kubeadm.Url)
 	kubelet.GetCmd = fmt.Sprintf("curl -L -o %s  %s", kubelet.Path, kubelet.Url)
 	kubectl.GetCmd = fmt.Sprintf("curl -L -o %s  %s", kubectl.Path, kubectl.Url)
@@ -66,15 +72,19 @@ func FilesDownloadHttp(mgr *manager.Manager, filepath, version, arch string) err
 
 	binaries := []files.KubeBinary{kubeadm, kubelet, kubectl, helm, kubecni}
 
+	// 遍历开始下载
 	for _, binary := range binaries {
 		mgr.Logger.Infoln(fmt.Sprintf("Downloading %s ...", binary.Name))
+		// 如果该文件不存在的话，才下载
 		if util.IsExist(binary.Path) == false {
 			for i := 5; i > 0; i-- {
+				// 执行命令开始下载
 				if output, err := exec.Command("/bin/sh", "-c", binary.GetCmd).CombinedOutput(); err != nil {
 					fmt.Println(string(output))
 					return errors.New(fmt.Sprintf("Failed to download %s binary: %s", binary.Name, binary.GetCmd))
 				}
 
+				// 检查文件是否完整
 				if err := SHA256Check(binary, version); err != nil {
 					if i == 1 {
 						return err
@@ -92,6 +102,7 @@ func FilesDownloadHttp(mgr *manager.Manager, filepath, version, arch string) err
 		}
 	}
 
+	// 如果KubeSphere为v2.1.1版本则下载helm2
 	if mgr.Cluster.KubeSphere.Version == "v2.1.1" {
 		mgr.Logger.Infoln(fmt.Sprintf("Downloading %s ...", "helm2"))
 		if util.IsExist(fmt.Sprintf("%s/helm2", filepath)) == false {
@@ -121,6 +132,7 @@ func Prepare(mgr *manager.Manager) error {
 		kubeVersion = cfg.Kubernetes.Version
 	}
 
+	// 设置架构
 	archMap := make(map[string]bool)
 	for _, host := range mgr.Cluster.Hosts {
 		switch host.Arch {
@@ -134,11 +146,14 @@ func Prepare(mgr *manager.Manager) error {
 	}
 
 	for arch := range archMap {
+		// 拼接二进制包的下载目录
 		binariesDir := fmt.Sprintf("%s/%s/%s/%s", currentDir, kubekeyapi.DefaultPreDir, kubeVersion, arch)
+		// 创建目录
 		if err := util.CreateDir(binariesDir); err != nil {
 			return errors.Wrap(err, "Failed to create download target dir")
 		}
 
+		// 下载kubeadm kubelet kubectl  kubecni
 		if err := FilesDownloadHttp(mgr, binariesDir, kubeVersion, arch); err != nil {
 			return err
 		}

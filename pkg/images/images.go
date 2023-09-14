@@ -77,8 +77,10 @@ func (image Image) ImageRepo() string {
 }
 
 func (images *Images) PullImages(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
+	// 遍历所有的镜像
 	for _, image := range images.Images {
 
+		// 仅下载master节点所需要的镜像
 		if node.IsMaster && image.Group == kubekeyapi.Master && image.Enable {
 			fmt.Printf("[%s] Downloading image: %s\n", node.Name, image.ImageName())
 			_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E docker pull %s", image.ImageName()), 5, false)
@@ -86,6 +88,8 @@ func (images *Images) PullImages(mgr *manager.Manager, node *kubekeyapi.HostCfg)
 				return errors.Wrap(errors.WithStack(err), fmt.Sprintf("Failed to download image: %s", image.ImageName()))
 			}
 		}
+
+		// 仅下载worker节点所有要的镜像
 		if node.IsWorker && image.Group == kubekeyapi.Worker && image.Enable {
 			fmt.Printf("[%s] Downloading image: %s\n", node.Name, image.ImageName())
 			_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E docker pull %s", image.ImageName()), 5, false)
@@ -93,6 +97,8 @@ func (images *Images) PullImages(mgr *manager.Manager, node *kubekeyapi.HostCfg)
 				return errors.Wrap(errors.WithStack(err), fmt.Sprintf("Failed to download image: %s", image.ImageName()))
 			}
 		}
+
+		// 下载master和worker都需要的镜像
 		if (node.IsMaster || node.IsWorker) && image.Group == kubekeyapi.K8s && image.Enable {
 			fmt.Printf("[%s] Downloading image: %s\n", node.Name, image.ImageName())
 			_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E docker pull %s", image.ImageName()), 5, false)
@@ -100,6 +106,8 @@ func (images *Images) PullImages(mgr *manager.Manager, node *kubekeyapi.HostCfg)
 				return errors.Wrap(errors.WithStack(err), fmt.Sprintf("Failed to download image: %s", image.ImageName()))
 			}
 		}
+
+		// 如果是etcd节点，下载etcd镜像
 		if node.IsEtcd && image.Group == kubekeyapi.Etcd && image.Enable {
 			fmt.Printf("[%s] Downloading image: %s\n", node.Name, image.ImageName())
 			_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E docker pull %s", image.ImageName()), 5, false)

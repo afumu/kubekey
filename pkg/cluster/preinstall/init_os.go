@@ -51,34 +51,44 @@ func InitOS(mgr *manager.Manager) error {
 
 func initOsOnNode(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 
+	// 在节点上创建一个名字为kube的用户
 	_ = addUsers(mgr, node)
 
+	// 创建一些必要的目录
 	if err := createDirectories(mgr, node); err != nil {
 		return err
 	}
 
+	// 判断 /tmp/kubekey 是否存在，如果已经存在，则删除它
+	// 删除成功之后，重新创建一个 /tmp/kubekey 目录
 	tmpDir := "/tmp/kubekey"
 	_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"if [ -d %s ]; then rm -rf %s ;fi\" && mkdir -p %s", tmpDir, tmpDir, tmpDir), 1, false)
 	if err != nil {
 		return errors.Wrap(errors.WithStack(err), "Failed to create tmp dir")
 	}
 
+	// 从node中获取name，设置当前节点的hostname
+	// 把/etc/hosts文件中 127.0.0.1 开头的开头也替换为nodename //todo 实际我查看似乎没有替换
 	_, err1 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"hostnamectl set-hostname %s && sed -i '/^127.0.1.1/s/.*/127.0.1.1      %s/g' /etc/hosts\"", node.Name, node.Name), 1, false)
 	if err1 != nil {
 		return errors.Wrap(errors.WithStack(err1), "Failed to override hostname")
 	}
 
+	// 初始化脚本
+	// 这个脚本用于执行一系列初始化操作系统的任务，包括关闭交换分区、设置内核参数、停用防火墙、加载内核模块等。这些任务通常是为了在Kubernetes集群部署过程中准备操作系统环境而执行的。
 	initOsScript, err2 := tmpl.InitOsScript(mgr)
 	if err2 != nil {
 		return err2
 	}
 
+	// 把脚本写入文件initOS.sh中
 	str := base64.StdEncoding.EncodeToString([]byte(initOsScript))
 	_, err3 := mgr.Runner.ExecuteCmd(fmt.Sprintf("echo %s | base64 -d > %s/initOS.sh && chmod +x %s/initOS.sh", str, tmpDir, tmpDir), 1, false)
 	if err3 != nil {
 		return errors.Wrap(errors.WithStack(err3), "Failed to generate init os script")
 	}
 
+	// 把initOS.sh脚本拷贝到 /usr/local/bin/kube-scripts 目录中执行
 	_, err4 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo cp %s/initOS.sh %s && sudo %s/initOS.sh", tmpDir, kubeScriptDir, kubeScriptDir), 1, true)
 	if err4 != nil {
 		return errors.Wrap(errors.WithStack(err4), "Failed to configure operating system")
@@ -102,33 +112,43 @@ func addUsers(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 
 func createDirectories(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 	dirs := []string{binDir, kubeConfigDir, kubeCertDir, kubeManifestDir, kubeScriptDir, kubeletFlexvolumesPluginsDir}
+	// 遍历上面所有的目录，然后创建这些目录
 	for _, dir := range dirs {
 		if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"mkdir -p %s\"", dir), 1, false); err != nil {
 			return err
 		}
+
+		// 如果是kubeletFlexvolumesPluginsDir
+		// 把"/usr/libexec/kubernetes目录，更改所有者为kube用户
 		if dir == kubeletFlexvolumesPluginsDir {
 			if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"chown kube -R %s\"", "/usr/libexec/kubernetes"), 1, false); err != nil {
 				return err
 			}
 		} else {
+			// 把剩下的路径的所有者都更改为kube用户
 			if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"chown kube -R %s\"", dir), 1, false); err != nil {
 				return err
 			}
 		}
 	}
 
+	// 创建/etc/cni/net.d 目录，把/etc/cni的所有者更改为kube用户
 	if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"mkdir -p %s && chown kube -R %s\"", "/etc/cni/net.d", "/etc/cni"), 1, false); err != nil {
 		return err
 	}
 
+	// 创建 /opt/cni/bin 目录，把/opt/cni的所有者更改为kube用户
 	if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"mkdir -p %s && chown kube -R %s\"", "/opt/cni/bin", "/opt/cni"), 1, false); err != nil {
 		return err
 	}
 
+	// 创建 /var/lib/calico 目录，把/var/lib/calico的所有者更改为kube用户
 	if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"mkdir -p %s && chown kube -R %s\"", "/var/lib/calico", "/var/lib/calico"), 1, false); err != nil {
 		return err
 	}
 
+	// 如果是etcd节点
+	// 创建/var/lib/etcd，把/var/lib/etcd的所有者更改为etcd用户
 	if node.IsEtcd {
 		if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"mkdir -p %s && chown etcd -R %s\"", "/var/lib/etcd", "/var/lib/etcd"), 1, false); err != nil {
 			return err

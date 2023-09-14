@@ -9,7 +9,7 @@ import (
 )
 
 func PrePullImages(mgr *manager.Manager) error {
-
+	// 拉取镜像
 	if !mgr.SkipPullImages {
 		mgr.Logger.Infoln("Start to download images on all nodes")
 		if err := mgr.RunTaskOnAllNodes(PullImages, true); err != nil {
@@ -37,6 +37,8 @@ func PullImages(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 		GetImage(mgr, "calico-flexvol"),
 		GetImage(mgr, "flannel"),
 	}
+
+	// 开始拉取镜像
 	if err := i.PullImages(mgr, node); err != nil {
 		return err
 	}
@@ -47,6 +49,7 @@ func GetImage(mgr *manager.Manager, name string) images.Image {
 	var image images.Image
 	var pauseTag string
 
+	// 对比版本
 	cmp, err := versionutil.MustParseSemantic(mgr.Cluster.Kubernetes.Version).Compare("v1.18.0")
 	if err != nil {
 		mgr.Logger.Fatal("Failed to compare version: %v", err)

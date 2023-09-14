@@ -37,6 +37,7 @@ func Precheck(mgr *manager.Manager) error {
 		if err := mgr.RunTaskOnAllNodes(PrecheckNodes, true); err != nil {
 			return err
 		}
+		// 检查确认
 		PrecheckConfirm(mgr)
 	}
 	return nil
@@ -45,6 +46,7 @@ func Precheck(mgr *manager.Manager) error {
 func PrecheckNodes(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 	var results = make(map[string]interface{})
 	results["name"] = node.Name
+	// 检查这些BaseSoftwares软件是否存在
 	for _, software := range BaseSoftwares {
 		_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"which %s\"", software), 0, false)
 		switch software {
@@ -61,6 +63,8 @@ func PrecheckNodes(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 			results[software] = "y"
 		}
 	}
+
+	// 设置时间
 	output, err := mgr.Runner.ExecuteCmd("date +\"%Z %H:%M:%S\"", 0, false)
 	if err != nil {
 		results["time"] = ""
