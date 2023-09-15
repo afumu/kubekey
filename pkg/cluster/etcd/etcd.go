@@ -47,15 +47,19 @@ func GenerateEtcdCerts(mgr *manager.Manager) error {
 func generateCerts(mgr *manager.Manager, _ *kubekeyapi.HostCfg) error {
 
 	if mgr.Runner.Index == 0 {
+		// 构建生成证书的脚本
 		certsScript, err := tmpl.GenerateEtcdSslScript(mgr)
 		if err != nil {
 			return err
 		}
+		// 把脚本写入到  /tmp/kubekey/make-ssl-etcd.sh 中
 		certsScriptBase64 := base64.StdEncoding.EncodeToString([]byte(certsScript))
 		_, err1 := mgr.Runner.ExecuteCmd(fmt.Sprintf("echo %s | base64 -d > /tmp/kubekey/make-ssl-etcd.sh && chmod +x /tmp/kubekey/make-ssl-etcd.sh", certsScriptBase64), 1, false)
 		if err1 != nil {
 			return errors.Wrap(errors.WithStack(err1), "Failed to generate etcd certs script")
 		}
+
+		// 构建etcd配置脚本
 		certsOpensslCfg, err := tmpl.GenerateEtcdSslCfg(mgr.Cluster)
 		if err != nil {
 			return err
@@ -66,13 +70,14 @@ func generateCerts(mgr *manager.Manager, _ *kubekeyapi.HostCfg) error {
 			return errors.Wrap(errors.WithStack(err2), "Failed to generate etcd certs script")
 		}
 
+		// 执行刚刚生成的make-ssl-etcd.sh
 		cmd := fmt.Sprintf("mkdir -p %s && /bin/bash -x %s/make-ssl-etcd.sh -f %s/openssl.conf -d %s", etcdCertDir, "/tmp/kubekey", "/tmp/kubekey", etcdCertDir)
-
 		_, err3 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", cmd), 1, false)
 		if err3 != nil {
 			return errors.Wrap(errors.WithStack(err3), "Failed to generate etcd certs")
 		}
 
+		// 遍历获取证书内容，写入到certsStr通道中中
 		for _, cert := range generateCertsFiles(mgr) {
 			certsBase64Cmd := fmt.Sprintf("sudo -E /bin/sh -c \"cat %s/%s | base64 --wrap=0\"", etcdCertDir, cert)
 			certsBase64, err4 := mgr.Runner.ExecuteCmd(certsBase64Cmd, 1, false)
@@ -87,7 +92,9 @@ func generateCerts(mgr *manager.Manager, _ *kubekeyapi.HostCfg) error {
 		}
 
 	} else {
+		// 然后从 certsStr 通道中接收证书内容，并将它们写入文件。
 		_, _ = mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo mkdir -p %s", etcdCertDir), 1, false)
+		// 把第一个etcd节点生成的证书内容，写入到在其他etcd节点
 		for file, cert := range <-certsStr {
 			writeCertCmd := fmt.Sprintf("sudo -E /bin/sh -c \"echo %s | base64 -d > %s/%s\"", cert, etcdCertDir, file)
 			_, err4 := mgr.Runner.ExecuteCmd(writeCertCmd, 1, false)
@@ -124,6 +131,7 @@ func SyncEtcdCertsToMaster(mgr *manager.Manager) error {
 }
 
 func syncEtcdCertsToMaster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
+	// 如果不是ETCD的话，把证书内容同步到所有master节点
 	if !node.IsEtcd {
 		_, _ = mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo mkdir -p %s", etcdCertDir), 1, false)
 		for file, cert := range certsContent {
@@ -144,36 +152,45 @@ func GenerateEtcdService(mgr *manager.Manager) error {
 }
 
 func generateEtcdService(mgr *manager.Manager, _ *kubekeyapi.HostCfg) error {
+	// 1.生成etcd自启服务脚本
 	etcdService, err := tmpl.GenerateEtcdService(mgr.Runner.Index)
 	if err != nil {
 		return err
 	}
+	// 把脚本写入到/etc/systemd/system/etcd.service 文件中
 	etcdServiceBase64 := base64.StdEncoding.EncodeToString([]byte(etcdService))
 	_, err1 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"echo %s | base64 -d > /etc/systemd/system/etcd.service\"", etcdServiceBase64), 1, false)
 	if err1 != nil {
 		return errors.Wrap(errors.WithStack(err1), "Failed to generate etcd service")
 	}
 
+	// 2.生成使用docker启动etcd容器服务的脚本
 	etcdBin, err := tmpl.GenerateEtcdBinary(mgr, mgr.Runner.Index)
 	if err != nil {
 		return err
 	}
+	// 这个上面生成的启动etcd容器服务的脚本重新写入到 /usr/local/bin/etcd 文件中，并赋予它执行权限
+	// 这里就是为什么在上面第一步中的自动启动脚本会执行 /usr/local/bin/etcd 文件的原因 。还有这种操作，可以呀。
 	etcdBinBase64 := base64.StdEncoding.EncodeToString([]byte(etcdBin))
 	_, err3 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"echo %s | base64 -d > /usr/local/bin/etcd && chmod +x /usr/local/bin/etcd\"", etcdBinBase64), 1, false)
 	if err3 != nil {
 		return errors.Wrap(errors.WithStack(err3), "Failed to generate etcd bin")
 	}
 
+	// 启动一个临时的etcd容器，然后把里面的etcdctl工具拷贝到宿主上
+	// etcdctl 是用于与 etcd 键值存储系统进行交互的命令行工具，运行用户对etcd进行操作
 	getEtcdCtlCmd := fmt.Sprintf("docker run --rm -v /usr/local/bin:/systembindir %s /bin/cp /usr/local/bin/etcdctl /systembindir/etcdctl", preinstall.GetImage(mgr, "etcd").ImageName())
 	_, err4 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", getEtcdCtlCmd), 2, false)
 	if err4 != nil {
 		return errors.Wrap(errors.WithStack(err4), "Failed to get etcdctl")
 	}
 
+	// 启动etcd服务
 	if err := restartEtcd(mgr); err != nil {
 		return err
 	}
 
+	// 记录地址
 	var addrList []string
 	for _, host := range mgr.EtcdNodes {
 		addrList = append(addrList, fmt.Sprintf("https://%s:2379", host.InternalAddress))
