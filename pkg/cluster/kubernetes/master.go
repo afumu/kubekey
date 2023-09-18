@@ -51,7 +51,10 @@ func GetClusterStatus(mgr *manager.Manager) error {
 
 func getClusterStatus(mgr *manager.Manager, _ *kubekeyapi.HostCfg) error {
 	if clusterStatus["clusterInfo"] == "" {
+		// 判断 /etc/kubernetes/admin.conf 是否存在
 		output, err := mgr.Runner.ExecuteCmd("sudo -E /bin/sh -c \"[ -f /etc/kubernetes/admin.conf ] && echo 'Cluster already exists.' || echo 'Cluster will be created.'\"", 0, true)
+
+		// 如果进入这里，证明集群还没有创建过
 		if strings.Contains(output, "Cluster will be created") {
 			clusterIsExist = false
 		} else {
@@ -59,6 +62,7 @@ func getClusterStatus(mgr *manager.Manager, _ *kubekeyapi.HostCfg) error {
 				return errors.Wrap(errors.WithStack(err), "Failed to find /etc/kubernetes/admin.conf")
 			} else {
 				clusterIsExist = true
+				// 打印版本信息
 				output, err := mgr.Runner.ExecuteCmd("sudo cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep 'image:' | awk -F '[:]' '{print $(NF-0)}'", 0, true)
 				if err != nil {
 					return errors.Wrap(errors.WithStack(err), "Failed to find current version")
@@ -67,6 +71,7 @@ func getClusterStatus(mgr *manager.Manager, _ *kubekeyapi.HostCfg) error {
 						clusterStatus["version"] = output
 					}
 				}
+				// 这里调用kubectl生成node加入master的token
 				if err := getJoinNodesCmd(mgr); err != nil {
 					return err
 				}
@@ -184,6 +189,7 @@ func getJoinNodesCmd(mgr *manager.Manager) error {
 }
 
 func getJoinCmd(mgr *manager.Manager) error {
+	// 执行kubeadm 上传证书
 	uploadCertsCmd := "/usr/local/bin/kubeadm init phase upload-certs --upload-certs"
 	output, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", uploadCertsCmd), 5, true)
 	if err != nil {
@@ -196,6 +202,8 @@ func getJoinCmd(mgr *manager.Manager) error {
 		return err1
 	}
 
+	// 执行这个命令会生成一个新的加入令牌，并将加入命令打印到终端
+	// 这个命令会打印加入执行master
 	tokenCreateMasterCmd := "/usr/local/bin/kubeadm token create --print-join-command"
 	output, err2 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", tokenCreateMasterCmd), 5, true)
 	if err2 != nil {
@@ -203,13 +211,17 @@ func getJoinCmd(mgr *manager.Manager) error {
 	}
 
 	joinWorkerStrList := strings.Split(output, "kubeadm join")
+	// 记录创建worker的命令
 	clusterStatus["joinWorkerCmd"] = fmt.Sprintf("/usr/local/bin/kubeadm join %s", joinWorkerStrList[1])
+	// 记录创建master的命令
 	clusterStatus["joinMasterCmd"] = fmt.Sprintf("%s --control-plane --certificate-key %s", clusterStatus["joinWorkerCmd"], certificateKey)
 
+	// 获取集群信息
 	output, err3 := mgr.Runner.ExecuteCmd("sudo -E /bin/sh -c \"/usr/local/bin/kubectl get nodes -o wide\"", 5, true)
 	if err3 != nil {
 		return errors.Wrap(errors.WithStack(err3), "Failed to get cluster info")
 	}
+	// 记录集群的信息
 	clusterStatus["clusterInfo"] = output
 	tmp := strings.Split(clusterStatus["clusterInfo"], "\r\n")
 	if len(tmp) > 1 {
@@ -218,11 +230,13 @@ func getJoinCmd(mgr *manager.Manager) error {
 		}
 	}
 
+	// 获取集群的配置
 	kubeCfgBase64Cmd := "cat /etc/kubernetes/admin.conf | base64 --wrap=0"
 	output, err4 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", kubeCfgBase64Cmd), 1, false)
 	if err4 != nil {
 		return errors.Wrap(errors.WithStack(err4), "Failed to get cluster kubeconfig")
 	}
+	// 记录集群配置信息
 	clusterStatus["kubeConfig"] = output
 
 	return nil
@@ -262,6 +276,7 @@ func joinNodesToCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 			}
 		}
 		if node.IsWorker && !node.IsMaster {
+			// 添加worker加入集群
 			err := addWorker(mgr)
 			if err != nil {
 				return err
@@ -277,6 +292,7 @@ func joinNodesToCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 
 func addMaster(mgr *manager.Manager) error {
 	for i := 0; i < 3; i++ {
+		// 启动集群中的master
 		_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", clusterStatus["joinMasterCmd"]), 0, true)
 		if err != nil {
 			if i == 2 {
@@ -309,11 +325,13 @@ func addWorker(mgr *manager.Manager) error {
 		}
 	}
 
+	// 创建.kube 目录
 	createConfigDirCmd := "mkdir -p /root/.kube && mkdir -p $HOME/.kube"
 	chownKubeConfig := "chown $(id -u):$(id -g) -R $HOME/.kube"
 	if _, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", createConfigDirCmd), 1, false); err != nil {
 		return errors.Wrap(errors.WithStack(err), "Failed to create kube dir")
 	}
+	// 把kubeConfig 写入到.kube 下面的config中
 	syncKubeconfigForRootCmd := fmt.Sprintf("sudo -E /bin/sh -c \"echo %s | base64 -d > %s\"", clusterStatus["kubeConfig"], "/root/.kube/config")
 	syncKubeconfigForUserCmd := fmt.Sprintf("echo %s | base64 -d > %s && %s", clusterStatus["kubeConfig"], "$HOME/.kube/config", chownKubeConfig)
 	if _, err := mgr.Runner.ExecuteCmd(syncKubeconfigForRootCmd, 1, false); err != nil {

@@ -53,6 +53,8 @@ func ExistNodeName(nodename string) bool {
 
 func SyncKubeBinaries(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 
+	// 判断/tmp/kubekey是否存在
+	// 如果存在就删除，如果不存在就创建
 	tmpDir := "/tmp/kubekey"
 	_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"if [ -d %s ]; then rm -rf %s ;fi\" && mkdir -p %s", tmpDir, tmpDir, tmpDir), 1, false)
 	if err != nil {
@@ -64,6 +66,7 @@ func SyncKubeBinaries(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 		return errors.Wrap(err1, "Failed to get current dir")
 	}
 
+	// 二进制包路径
 	filesDir := fmt.Sprintf("%s/%s/%s/%s", currentDir, kubekeyapi.DefaultPreDir, mgr.Cluster.Kubernetes.Version, node.Arch)
 
 	kubeadm := "kubeadm"
@@ -76,15 +79,18 @@ func SyncKubeBinaries(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 	var cmdlist []string
 
 	for _, binary := range binaryList {
+		// 拷贝文件到/tmp/kubekey中
 		if err := mgr.Runner.ScpFile(fmt.Sprintf("%s/%s", filesDir, binary), fmt.Sprintf("%s/%s", "/tmp/kubekey", binary)); err != nil {
 			return errors.Wrap(errors.WithStack(err), fmt.Sprintf("Failed to sync binaries"))
 		}
 
 		if strings.Contains(binary, "cni-plugins-linux") {
+			// 解压/tmp/kubekey目录下文件到/opt/cni/bin
 			cmdlist = append(cmdlist, fmt.Sprintf("mkdir -p /opt/cni/bin && tar -zxf %s/%s -C /opt/cni/bin", "/tmp/kubekey", binary))
 		} else if strings.Contains(binary, "kubelet") {
 			continue
 		} else {
+			// 复制文件/tmp/kubekey到/usr/local/bin
 			cmdlist = append(cmdlist, fmt.Sprintf("cp -f /tmp/kubekey/%s /usr/local/bin/%s && chmod +x /usr/local/bin/%s", binary, binary, binary))
 		}
 	}

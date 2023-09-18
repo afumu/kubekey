@@ -209,8 +209,11 @@ func SetupEtcdCluster(mgr *manager.Manager) error {
 
 func setupEtcdCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 	var localPeerAddresses []string
+
+	// 判断 /etc/etcd.env 文件是否存在
 	output, _ := mgr.Runner.ExecuteCmd("sudo -E /bin/sh -c \"[ -f /etc/etcd.env ] && echo 'Configuration file already exists' || echo 'Configuration file will be created'\"", 0, true)
 	if strings.TrimSpace(output) == "Configuration file already exists" {
+		// 如果文件已经存在，检查etcd是否存活
 		if err := helthCheck(mgr, node); err != nil {
 			return err
 		}
@@ -218,6 +221,7 @@ func setupEtcdCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 		for i := 0; i <= mgr.Runner.Index; i++ {
 			localPeerAddresses = append(localPeerAddresses, fmt.Sprintf("etcd%d=https://%s:2380", i+1, mgr.EtcdNodes[i].InternalAddress))
 		}
+		// 加入地址
 		if mgr.Runner.Index == len(mgr.EtcdNodes)-1 {
 			peerAddresses = localPeerAddresses
 		}
@@ -229,6 +233,7 @@ func setupEtcdCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 			peerAddresses = localPeerAddresses
 		}
 		if mgr.Runner.Index == 0 {
+			// 如果是第一次，则创建配置文件
 			if err := refreshConfig(mgr, node, mgr.Runner.Index, localPeerAddresses, "new"); err != nil {
 				return err
 			}
@@ -284,6 +289,8 @@ func BackupEtcd(mgr *manager.Manager) error {
 }
 
 func backupEtcd(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
+	// 如果存在/opt/etcd_back 就删除
+	// 如果不存在就创建/opt/etcd_back
 	_, err := mgr.Runner.ExecuteCmd("sudo -E /bin/sh -c \"if [ -d /opt/etcd_back ]; then rm -rf /opt/etcd_back ;fi && mkdir -p /opt/etcd_back\"", 0, false)
 	if err != nil {
 		return errors.Wrap(errors.WithStack(err), "Failed to mkdir /opt/etcd_back")
@@ -328,6 +335,7 @@ func refreshEtcdConfig(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
 }
 
 func helthCheck(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
+	// 导出环境变量，检查etcd是否存活
 	checkHealthCmd := fmt.Sprintf("sudo -E /bin/sh -c \"export ETCDCTL_API=2;export ETCDCTL_CERT_FILE='/etc/ssl/etcd/ssl/admin-%s.pem';export ETCDCTL_KEY_FILE='/etc/ssl/etcd/ssl/admin-%s-key.pem';export ETCDCTL_CA_FILE='/etc/ssl/etcd/ssl/ca.pem';%s/etcdctl --endpoints=%s cluster-health | grep -q 'cluster is healthy'\"", node.Name, node.Name, etcdBinDir, accessAddresses)
 helthCheckLoop:
 	for i := 20; i > 0; i-- {
