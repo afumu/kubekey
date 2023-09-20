@@ -88,15 +88,21 @@ func InitKubernetesCluster(mgr *manager.Manager) error {
 }
 
 func initKubernetesCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error {
+
+	// 如果是第一个，而且集群不存在
 	if mgr.Runner.Index == 0 && !clusterIsExist {
 
 		var kubeadmCfgBase64 string
+		// 判断kubeadm-config.yaml是否存在
 		if util.IsExist(fmt.Sprintf("%s/kubeadm-config.yaml", mgr.WorkDir)) {
+			// 输出kubeadm-config.yaml内容
 			output, err := exec.Command("/bin/sh", "-c", fmt.Sprintf("cat %s/kubeadm-config.yaml | base64 --wrap=0", mgr.WorkDir)).CombinedOutput()
 			if err != nil {
 				fmt.Println(string(output))
 				return errors.Wrap(errors.WithStack(err), fmt.Sprintf("Failed to read custom kubeadm config: %s/kubeadm-config.yaml", mgr.WorkDir))
 			}
+
+			// 记录kubeadm-config.yaml内容
 			kubeadmCfgBase64 = strings.TrimSpace(string(output))
 		} else {
 			kubeadmCfg, err := tmpl.GenerateKubeadmCfg(mgr)
@@ -106,12 +112,14 @@ func initKubernetesCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error
 			kubeadmCfgBase64 = base64.StdEncoding.EncodeToString([]byte(kubeadmCfg))
 		}
 
+		// 把上面内容写到 /etc/kubernetes/kubeadm-config.yaml 中
 		_, err1 := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"mkdir -p /etc/kubernetes && echo %s | base64 -d > /etc/kubernetes/kubeadm-config.yaml\"", kubeadmCfgBase64), 1, false)
 		if err1 != nil {
 			return errors.Wrap(errors.WithStack(err1), "Failed to generate kubeadm config")
 		}
 
 		for i := 0; i < 3; i++ {
+			// 根据配置文件，初始化kubernetes集群
 			_, err2 := mgr.Runner.ExecuteCmd("sudo -E /bin/sh -c \"/usr/local/bin/kubeadm init --config=/etc/kubernetes/kubeadm-config.yaml\"", 0, true)
 			if err2 != nil {
 				if i == 2 {
@@ -133,10 +141,14 @@ func initKubernetesCluster(mgr *manager.Manager, node *kubekeyapi.HostCfg) error
 		if err := addWorkerLabel(mgr, node); err != nil {
 			return err
 		}
+
+		// 创建集群dns
 		if err := dns.CreateClusterDns(mgr); err != nil {
 			return err
 		}
 		clusterIsExist = true
+
+		// 生成集群中节点加入的命令
 		if err := getJoinNodesCmd(mgr); err != nil {
 			return err
 		}
@@ -155,6 +167,7 @@ func GetKubeConfig(mgr *manager.Manager) error {
 	chownKubeConfig := "chown $(id -u):$(id -g) $HOME/.kube/config"
 
 	cmd := strings.Join([]string{createConfigDirCmd, getKubeConfigCmd, getKubeConfigCmdUsr, chownKubeConfig}, " && ")
+	// 创建目录，拷贝文件
 	_, err := mgr.Runner.ExecuteCmd(fmt.Sprintf("sudo -E /bin/sh -c \"%s\"", cmd), 2, false)
 	if err != nil {
 		return errors.Wrap(errors.WithStack(err), "Failed to init kubernetes cluster")

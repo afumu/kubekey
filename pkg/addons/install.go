@@ -33,6 +33,7 @@ import (
 func InstallAddons(mgr *manager.Manager) error {
 	addonsNum := len(mgr.Cluster.Addons)
 	if addonsNum != 0 {
+		// 遍历所有的addon插件，安装这些addon插件
 		for index, addon := range mgr.Cluster.Addons {
 			mgr.Logger.Infof("Installing addon [%v-%v]: %s", addonsNum, index+1, addon.Name)
 			if err := installAddon(mgr, &addon, filepath.Join(mgr.WorkDir, "config")); err != nil {
